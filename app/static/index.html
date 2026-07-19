@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conteo vial · YOLO26</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">ANÁLISIS DE MOVILIDAD</p>
+      <h1>Conteo vial <span>YOLO26</span></h1>
+    </div>
+    <div class="status-dot"><i></i> <span id="systemStatus">Detectando acelerador…</span></div>
+  </header>
+
+  <main>
+    <section class="intro">
+      <div>
+        <p class="step-label">01 · VIDEO</p>
+        <h2>Sube el vuelo y marca los puntos de conteo.</h2>
+      </div>
+      <label class="upload-card" id="uploadCard">
+        <input type="file" id="videoInput" accept="video/*">
+        <span class="upload-icon">↑</span>
+        <strong id="uploadTitle">Seleccionar video</strong>
+        <small id="uploadHint">MP4, MOV, AVI, MKV o WebM</small>
+      </label>
+    </section>
+
+    <section class="workspace hidden" id="workspace">
+      <div class="video-column">
+        <div class="section-heading">
+          <div>
+            <p class="step-label">02 · TRAZOS</p>
+            <h2>Dibuja una línea por cada carretera.</h2>
+          </div>
+          <button class="ghost" id="clearLines" type="button">Borrar trazos</button>
+        </div>
+        <div class="video-stage" id="videoStage">
+          <video id="video" preload="metadata"></video>
+          <canvas id="drawingCanvas"></canvas>
+          <div class="canvas-help" id="canvasHelp">Arrastra sobre el video para dibujar</div>
+          <div class="video-controls">
+            <button type="button" id="playPause">▶</button>
+            <input type="range" id="timeline" min="0" max="1000" value="0" aria-label="Posición del video">
+            <span id="videoTime">00:00 / 00:00</span>
+          </div>
+        </div>
+        <p class="direction-help"><span class="entry-key">→ E</span> Entrada <span class="exit-key">← S</span> Salida. Cada línea contabiliza siempre los dos sentidos.</p>
+      </div>
+
+      <aside class="control-panel">
+        <div class="panel-title">
+          <div>
+            <p class="step-label">03 · CONFIGURACIÓN</p>
+            <h3>Trazos</h3>
+          </div>
+          <span class="line-count" id="lineCount">0</span>
+        </div>
+        <div id="lineList" class="line-list">
+          <p class="empty-state">Aún no hay trazos.<br>Dibuja sobre el video.</p>
+        </div>
+
+        <div class="divider"></div>
+        <h3>Clases a detectar</h3>
+        <div class="class-grid" id="classGrid">
+          <label><input type="checkbox" value="auto" checked><span>Auto</span></label>
+          <label><input type="checkbox" value="truck" checked><span>Truck</span></label>
+          <label><input type="checkbox" value="bus" checked><span>Bus</span></label>
+          <label><input type="checkbox" value="bicicleta" checked><span>Bicicleta</span></label>
+          <label><input type="checkbox" value="persona" checked><span>Persona</span></label>
+        </div>
+
+        <details>
+          <summary>Ajustes del modelo</summary>
+          <label class="field">Perfil de análisis
+            <select id="preset"><option value="aerial" selected>Aéreo preciso · recomendado</option><option value="balanced">Aéreo equilibrado</option><option value="fast">Rápido</option></select>
+          </label>
+          <label class="field">Modelo
+            <select id="model"><option value="best.pt" selected>best.pt · entrenado para vuelos</option><option value="yolo26n.pt">YOLO26n · COCO rápido</option><option value="yolo26s.pt">YOLO26s · COCO preciso</option></select>
+          </label>
+          <label class="field">Procesador
+            <select id="device"><option value="auto">Automático · recomendado</option><option value="mps">GPU Apple Metal</option><option value="cpu">CPU</option></select>
+          </label>
+          <label class="field">Confianza <output id="confidenceOutput">0.10</output>
+            <input type="range" id="confidence" min="0.05" max="0.75" step="0.05" value="0.10">
+          </label>
+          <label class="field">Resolución de análisis
+            <select id="imageSize"><option value="640">640 · rápido</option><option value="960">960 · equilibrado</option><option value="1280" selected>1280 · objetos pequeños</option></select>
+          </label>
+          <p class="profile-note" id="profileNote">Usa best.pt, entrenado con categorías de tráfico aéreo.</p>
+          <label class="check-row"><input type="checkbox" id="saveVideo"><span>Generar video con seguimiento</span><small>Dibuja cajas, IDs y trayectorias; reduce la velocidad.</small></label>
+        </details>
+        <button class="primary" id="processButton" disabled>Iniciar conteo <span>→</span></button>
+      </aside>
+    </section>
+
+    <section class="processing hidden" id="processing">
+      <div class="processing-header">
+        <div><p class="step-label">04 · PROCESAMIENTO</p><h2 id="processingMessage">Preparando análisis…</h2></div>
+        <strong id="progressText">0%</strong>
+      </div>
+      <div class="progress-track"><div id="progressBar"></div></div>
+      <p id="eventCount">0 cruces detectados</p>
+    </section>
+
+    <section class="results hidden" id="results">
+      <div class="section-heading">
+        <div><p class="step-label">05 · RESULTADOS</p><h2>Conteo por trazo</h2></div>
+        <div class="actions"><a class="ghost hidden" id="downloadVideo">Video</a><a class="ghost" id="downloadJson">JSON</a><a class="primary compact" id="downloadCsv">Descargar CSV</a></div>
+      </div>
+      <div id="resultCards" class="result-grid"></div>
+    </section>
+  </main>
+  <div class="toast hidden" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
