@@ -36,3 +36,4 @@ class JobRequest(BaseModel):
     confidence: float = Field(default=0.10, ge=0.03, le=0.95)
     image_size: int = Field(default=1280, ge=320, le=1920)
     save_annotated_video: bool = False
+    video_quality: Literal["alta", "equilibrada", "liviana"] = "equilibrada"

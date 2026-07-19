@@ -75,6 +75,8 @@ Los videos originales y resultados se guardan en `data/` y están excluidos de G
 5. Selecciona las clases y ejecuta el conteo.
 6. Descarga el CSV o JSON de eventos. El video de seguimiento es opcional y muestra cajas, IDs persistentes y la trayectoria reciente de cada objeto.
 
+El video de seguimiento se exporta como MP4 H.264. Sus niveles disponibles son alta (`CRF 20`), equilibrada (`CRF 26`) y liviana (`CRF 31`). El codificador FFmpeg se instala dentro del entorno mediante `uv`; no requiere una instalación separada.
+
 Cada fila CSV representa un cruce e incluye: trazo, dirección, clase, ID del objeto, cuadro y segundo del video.
 
 En equipos Apple Silicon la app selecciona automáticamente la GPU Metal mediante MPS. El panel de progreso muestra el dispositivo y los cuadros procesados por segundo.

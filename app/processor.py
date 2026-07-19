@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import imageio_ffmpeg
 import numpy as np
 import torch
 from ultralytics import YOLO
@@ -27,6 +28,36 @@ CLASS_ALIASES = {
     "truck": {"truck"},
     "bus": {"bus"},
 }
+VIDEO_CRF = {"alta": 20, "equilibrada": 26, "liviana": 31}
+
+
+class H264VideoWriter:
+    def __init__(self, path: Path, fps: float, size: tuple[int, int], quality: str) -> None:
+        self._writer = imageio_ffmpeg.write_frames(
+            str(path), size,
+            fps=fps,
+            codec="libx264",
+            pix_fmt_in="bgr24",
+            pix_fmt_out="yuv420p",
+            quality=None,
+            macro_block_size=2,
+            output_params=[
+                "-crf", str(VIDEO_CRF[quality]),
+                "-preset", "veryfast",
+                "-movflags", "+faststart",
+            ],
+            ffmpeg_log_level="warning",
+        )
+        self._writer.send(None)
+        self._closed = False
+
+    def write(self, frame: Any) -> None:
+        self._writer.send(frame)
+
+    def release(self) -> None:
+        if not self._closed:
+            self._writer.close()
+            self._closed = True
 
 
 def resolve_class_mapping(
@@ -149,11 +180,7 @@ def process_video(job_id: str, request: JobRequest, video_path: Path, results_di
 
         if request.save_annotated_video:
             output_path = results_dir / f"{job_id}.mp4"
-            writer = cv2.VideoWriter(
-                str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
-            )
-            if not writer.isOpened():
-                raise RuntimeError("No fue posible crear el video de resultados")
+            writer = H264VideoWriter(output_path, fps, (width, height), request.video_quality)
 
         counts: dict[str, dict[str, dict[str, int]]] = {
             line["id"]: {

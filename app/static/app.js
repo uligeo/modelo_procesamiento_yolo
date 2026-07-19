@@ -126,6 +126,7 @@ canvas.addEventListener('pointerup', event => {
 });
 $('#clearLines').addEventListener('click', () => { state.lines=[]; renderLines(); });
 $('#confidence').addEventListener('input', event => $('#confidenceOutput').value = event.target.value);
+$('#saveVideo').addEventListener('change', event => $('#videoQualityField').classList.toggle('hidden', !event.target.checked));
 const presets = {
   aerial:{model:'best.pt', confidence:'0.10', imageSize:'1280', note:'Usa best.pt, entrenado con categorías de tráfico aéreo.'},
   balanced:{model:'yolo26n.pt', confidence:'0.10', imageSize:'1280', note:'Más rápido, pero puede omitir algunos vehículos pequeños.'},
@@ -152,6 +153,7 @@ $('#processButton').addEventListener('click', async () => {
     classes, model:$('#model').value,
     device:$('#device').value, confidence:Number($('#confidence').value),
     image_size:Number($('#imageSize').value), save_annotated_video:$('#saveVideo').checked,
+    video_quality:$('#videoQuality').value,
   };
   try {
     processButton.disabled = true; processButton.innerHTML = 'Iniciando…';
