@@ -27,12 +27,18 @@ function drawDirectionalArrow(origin, tip, color, label) {
   context.font = 'bold 14px system-ui'; context.fillText(label, tip.x + 6, tip.y - 5);
 }
 
-function drawArrow(line, color = '#00d49c') {
+function drawArrow(line, color = '#00d49c', lineNumber = null) {
   const width = canvas.width, height = canvas.height;
   const a = { x: line.x1 * width, y: line.y1 * height };
   const b = { x: line.x2 * width, y: line.y2 * height };
   context.strokeStyle = color; context.lineWidth = Math.max(3, width / 350); context.lineCap = 'round';
   context.beginPath(); context.moveTo(a.x, a.y); context.lineTo(b.x, b.y); context.stroke();
+  if (lineNumber !== null) {
+    context.beginPath(); context.arc(a.x, a.y, 15, 0, Math.PI * 2);
+    context.fillStyle = '#14241f'; context.fill(); context.strokeStyle = '#ffffff'; context.lineWidth = 2; context.stroke();
+    context.fillStyle = '#ffffff'; context.font = 'bold 14px system-ui'; context.textAlign = 'center'; context.textBaseline = 'middle';
+    context.fillText(String(lineNumber), a.x, a.y); context.textAlign = 'start'; context.textBaseline = 'alphabetic';
+  }
   const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy) || 1;
   const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   const normal = { x: -dy / length, y: dx / length };
@@ -45,7 +51,7 @@ function drawArrow(line, color = '#00d49c') {
 
 function redraw() {
   context.clearRect(0, 0, canvas.width, canvas.height);
-  state.lines.forEach(line => drawArrow(line));
+  state.lines.forEach((line, index) => drawArrow(line, '#00d49c', index + 1));
   if (state.drawing) drawArrow({ ...state.drawing, positive_direction: 'entrada' }, '#ffffff');
 }
 
@@ -64,13 +70,16 @@ function renderLines() {
   if (!state.lines.length) { list.innerHTML = '<p class="empty-state">Aún no hay trazos.<br>Dibuja sobre el video.</p>'; redraw(); return; }
   list.innerHTML = state.lines.map((line, index) => `
     <div class="line-card" data-id="${line.id}">
-      <div class="line-card-top"><i class="swatch"></i><input class="line-name" value="${escapeHtml(line.name)}" aria-label="Nombre del trazo"><button class="icon-button delete-line" title="Eliminar">×</button></div>
-      <div class="direction-row"><span class="direction-badges"><b>→ E</b><b>← S</b></span><button type="button" class="swap-direction" title="Intercambiar entrada y salida">⇄ Invertir</button></div>
+      <div class="line-card-top"><span class="line-number">${index + 1}</span><input class="line-name" value="${escapeHtml(line.name)}" aria-label="Nombre del trazo"><button class="icon-button delete-line" title="Eliminar">×</button></div>
+      <div class="direction-row"><span class="direction-badges"><b>${line.positive_direction === 'entrada' ? '→ E' : '← E'}</b><b>${line.positive_direction === 'entrada' ? '← S' : '→ S'}</b></span><button type="button" class="swap-direction" title="Intercambiar entrada y salida">⇄ Invertir</button></div>
     </div>`).join('');
   list.querySelectorAll('.line-card').forEach(card => {
     const line = state.lines.find(item => item.id === card.dataset.id);
     card.querySelector('.line-name').addEventListener('input', e => { line.name = e.target.value; });
-    card.querySelector('.swap-direction').addEventListener('click', () => { line.positive_direction = line.positive_direction === 'entrada' ? 'salida' : 'entrada'; redraw(); });
+    card.querySelector('.swap-direction').addEventListener('click', () => {
+      line.positive_direction = line.positive_direction === 'entrada' ? 'salida' : 'entrada';
+      renderLines();
+    });
     card.querySelector('.delete-line').addEventListener('click', () => { state.lines = state.lines.filter(item => item.id !== line.id); renderLines(); });
   });
   redraw();
@@ -192,8 +201,8 @@ function renderResults(job) {
   const videoDownload = $('#downloadVideo');
   if (job.output_video) { videoDownload.href=job.output_video; videoDownload.classList.remove('hidden'); }
   else { videoDownload.removeAttribute('href'); videoDownload.classList.add('hidden'); }
-  $('#resultCards').innerHTML = job.summary.map(line => `
-    <article class="result-card"><header><strong>${escapeHtml(line.linea)}</strong><strong>${line.total} cruces</strong></header>
+  $('#resultCards').innerHTML = job.summary.map((line, index) => `
+    <article class="result-card"><header><strong>Línea ${line.numero ?? index + 1} · ${escapeHtml(line.linea)}</strong><strong>${line.total} cruces</strong></header>
       <div class="result-columns">${['entrada','salida'].map(direction => `<div class="result-column"><h4>${direction}</h4>${Object.entries(line[direction]).map(([name,value]) => `<div class="metric"><span>${escapeHtml(name)}</span><b>${value}</b></div>`).join('')}</div>`).join('')}</div>
     </article>`).join('');
   $('#results').classList.remove('hidden'); $('#results').scrollIntoView({behavior:'smooth'});

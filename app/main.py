@@ -131,7 +131,7 @@ def get_csv(job_id: str) -> FileResponse:
     path = RESULTS / f"{job_id}.csv"
     if not path.exists():
         raise HTTPException(409, "El resultado todavía no está disponible")
-    return FileResponse(path, media_type="text/csv", filename=f"conteo-{job_id[:8]}.csv")
+    return FileResponse(path, media_type="text/csv", filename="resumen-conteo.csv")
 
 
 @app.get("/api/jobs/{job_id}/video")

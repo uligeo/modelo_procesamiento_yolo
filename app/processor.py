@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import math
 import time
@@ -15,6 +14,7 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
+from .reports import write_summary_csv
 from .schemas import JobRequest
 from .store import jobs
 
@@ -29,8 +29,6 @@ CLASS_ALIASES = {
     "bus": {"bus"},
 }
 VIDEO_CRF = {"alta": 20, "equilibrada": 26, "liviana": 31}
-
-
 class H264VideoWriter:
     def __init__(self, path: Path, fps: float, size: tuple[int, int], quality: str) -> None:
         self._writer = imageio_ffmpeg.write_frames(
@@ -130,7 +128,7 @@ def draw_line_overlay(frame: Any, line: dict[str, Any], counts: dict[str, Any]) 
         cv2.putText(frame, label_direction, (arrow_end[0] + 4, arrow_end[1]), cv2.FONT_HERSHEY_SIMPLEX, .5, arrow_color, 2)
     entry_total = sum(counts["entrada"].values())
     exit_total = sum(counts["salida"].values())
-    label = f'{line["name"]}: E {entry_total} | S {exit_total}'
+    label = f'{line["numero"]}. {line["name"]}: E {entry_total} | S {exit_total}'
     cv2.putText(frame, label, (p1[0], max(24, p1[1] - 10)), cv2.FONT_HERSHEY_SIMPLEX, .65, color, 2, cv2.LINE_AA)
 
 
@@ -170,9 +168,10 @@ def process_video(job_id: str, request: JobRequest, video_path: Path, results_di
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         pixel_lines = []
-        for line in request.lines:
+        for line_number, line in enumerate(request.lines, start=1):
             values = line.model_dump()
             values.update({
+                "numero": line_number,
                 "px1": round(line.x1 * width), "py1": round(line.y1 * height),
                 "px2": round(line.x2 * width), "py2": round(line.y2 * height),
             })
@@ -237,7 +236,7 @@ def process_video(job_id: str, request: JobRequest, video_path: Path, results_di
                                 counts[line["id"]][direction][class_name] += 1
                                 last_crossing[key] = frame_number
                                 events.append({
-                                    "line_id": line["id"], "linea": line["name"],
+                                    "line_id": line["id"], "numero": line["numero"], "linea": line["name"],
                                     "direccion": direction, "clase": class_name,
                                     "track_id": track_id, "frame": frame_number,
                                     "segundo": round(frame_number / fps, 2),
@@ -263,17 +262,13 @@ def process_video(job_id: str, request: JobRequest, video_path: Path, results_di
         for line in pixel_lines:
             line_counts = counts[line["id"]]
             summary.append({
-                "line_id": line["id"], "linea": line["name"],
+                "line_id": line["id"], "numero": line["numero"], "linea": line["name"],
                 "entrada": line_counts["entrada"], "salida": line_counts["salida"],
                 "total": sum(sum(values.values()) for values in line_counts.values()),
             })
 
         csv_path = results_dir / f"{job_id}.csv"
-        with csv_path.open("w", newline="", encoding="utf-8-sig") as csv_file:
-            fieldnames = ["line_id", "linea", "direccion", "clase", "track_id", "frame", "segundo"]
-            writer_csv = csv.DictWriter(csv_file, fieldnames=fieldnames)
-            writer_csv.writeheader()
-            writer_csv.writerows(events)
+        write_summary_csv(csv_path, summary, request.classes)
 
         json_path = results_dir / f"{job_id}.json"
         json_path.write_text(

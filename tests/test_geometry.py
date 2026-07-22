@@ -11,6 +11,7 @@ from app.processor import (
     segments_intersect,
     signed_side,
 )
+from app.reports import write_summary_csv
 from app.schemas import CountLine
 
 
@@ -54,3 +55,18 @@ def test_custom_aerial_model_classes_are_mapped_by_name():
 
 def test_video_quality_levels_reduce_bitrate_progressively():
     assert VIDEO_CRF["alta"] < VIDEO_CRF["equilibrada"] < VIDEO_CRF["liviana"]
+
+
+def test_summary_csv_matches_final_result(tmp_path):
+    path = tmp_path / "resumen.csv"
+    summary = [{
+        "numero": 1, "linea": "Avenida Norte", "total": 5,
+        "entrada": {"auto": 3, "bus": 0}, "salida": {"auto": 1, "bus": 1},
+    }]
+
+    write_summary_csv(path, summary, ["auto", "bus"])
+
+    assert path.read_text(encoding="utf-8-sig").splitlines() == [
+        "linea_numero,linea,total,entrada_auto,entrada_bus,salida_auto,salida_bus",
+        "1,Avenida Norte,5,3,0,1,1",
+    ]
