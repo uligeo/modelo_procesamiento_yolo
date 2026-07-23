@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 import json
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator
 
 import cv2
 import torch
@@ -13,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .processor import process_video
+from .reports import available_result_stem, result_filenames, safe_result_stem
 from .schemas import JobRequest
 from .store import jobs
 
@@ -24,7 +27,20 @@ STATIC = ROOT / "app" / "static"
 for directory in (UPLOADS, RESULTS):
     directory.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Conteo vial YOLO26", version="0.1.0")
+
+def clear_orphan_uploads(directory: Path = UPLOADS) -> None:
+    for path in directory.iterdir():
+        if path.is_file() and path.name != ".gitkeep":
+            path.unlink(missing_ok=True)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    clear_orphan_uploads()
+    yield
+
+
+app = FastAPI(title="Conteo vial YOLO26", version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.mount("/media", StaticFiles(directory=UPLOADS), name="media")
 
@@ -87,17 +103,28 @@ def upload_video(video: UploadFile = File(...)) -> dict[str, object]:
     }
 
 
+@app.delete("/api/videos/{video_id}", status_code=204)
+def delete_temporary_video(video_id: str) -> None:
+    if not re.fullmatch(r"[a-f0-9]{32}", video_id):
+        raise HTTPException(404, "Video no encontrado")
+    for path in UPLOADS.glob(f"{video_id}.*"):
+        path.unlink(missing_ok=True)
+
+
 @app.post("/api/jobs", status_code=202)
 def create_job(request: JobRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
     matches = list(UPLOADS.glob(f"{request.video_id}.*"))
     if len(matches) != 1:
         raise HTTPException(404, "Video no encontrado")
     job_id = uuid.uuid4().hex
+    result_stem = available_result_stem(RESULTS, request.source_filename)
+    filenames = result_filenames(result_stem)
     jobs.create(job_id, {
         "job_id": job_id, "status": "en_cola", "progress": 0,
         "message": "Esperando procesamiento", "events_count": 0,
+        "result_stem": result_stem, "filenames": filenames,
     })
-    background_tasks.add_task(process_video, job_id, request, matches[0], RESULTS)
+    background_tasks.add_task(process_video, job_id, request, matches[0], RESULTS, result_stem)
     return {"job_id": job_id}
 
 
@@ -106,13 +133,25 @@ def require_job(job_id: str) -> dict[str, object]:
         raise HTTPException(404, "Trabajo no encontrado")
     job = jobs.get(job_id)
     saved_result = RESULTS / f"{job_id}.json"
+    report = None
     if not job and saved_result.exists():
         report = json.loads(saved_result.read_text(encoding="utf-8"))
+    elif not job:
+        for candidate in RESULTS.glob("*_resultado.json"):
+            candidate_report = json.loads(candidate.read_text(encoding="utf-8"))
+            if candidate_report.get("job_id") == job_id:
+                report = candidate_report
+                saved_result = candidate
+                break
+    if not job and report:
+        result_stem = report.get("result_stem") or safe_result_stem(report.get("source_filename", "video.mp4"))
+        filenames = report.get("filenames") or result_filenames(result_stem)
         job = {
             "job_id": job_id, "status": "completado", "progress": 100,
             "message": "Conteo terminado", "summary": report["summary"],
             "events_count": len(report["events"]),
-            "output_video": f"/api/jobs/{job_id}/video" if (RESULTS / f"{job_id}.mp4").exists() else None,
+            "result_stem": result_stem, "filenames": filenames,
+            "output_video": f"/api/jobs/{job_id}/video" if (RESULTS / filenames["video"]).exists() else None,
             "csv": f"/api/jobs/{job_id}/csv", "json": f"/api/jobs/{job_id}/json",
         }
     if not job:
@@ -127,26 +166,32 @@ def get_job(job_id: str) -> dict[str, object]:
 
 @app.get("/api/jobs/{job_id}/csv")
 def get_csv(job_id: str) -> FileResponse:
-    require_job(job_id)
-    path = RESULTS / f"{job_id}.csv"
+    job = require_job(job_id)
+    filename = str(job.get("filenames", {}).get("csv", f"{job_id}.csv"))
+    path = RESULTS / filename
     if not path.exists():
         raise HTTPException(409, "El resultado todavía no está disponible")
-    return FileResponse(path, media_type="text/csv", filename="resumen-conteo.csv")
+    return FileResponse(path, media_type="text/csv", filename=filename)
 
 
 @app.get("/api/jobs/{job_id}/video")
 def get_result_video(job_id: str) -> FileResponse:
-    require_job(job_id)
-    path = RESULTS / f"{job_id}.mp4"
+    job = require_job(job_id)
+    filename = str(job.get("filenames", {}).get("video", f"{job_id}.mp4"))
+    path = RESULTS / filename
     if not path.exists():
         raise HTTPException(409, "El video todavía no está disponible")
-    return FileResponse(path, media_type="video/mp4", filename=f"conteo-{job_id[:8]}.mp4")
+    return FileResponse(
+        path, media_type="video/mp4",
+        filename=filename,
+    )
 
 
 @app.get("/api/jobs/{job_id}/json")
 def get_json(job_id: str) -> FileResponse:
-    require_job(job_id)
-    path = RESULTS / f"{job_id}.json"
+    job = require_job(job_id)
+    filename = str(job.get("filenames", {}).get("json", f"{job_id}.json"))
+    path = RESULTS / filename
     if not path.exists():
         raise HTTPException(409, "El resultado todavía no está disponible")
-    return FileResponse(path, media_type="application/json", filename=f"conteo-{job_id[:8]}.json")
+    return FileResponse(path, media_type="application/json", filename=filename)

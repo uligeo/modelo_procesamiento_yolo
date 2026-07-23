@@ -11,7 +11,7 @@ from app.processor import (
     segments_intersect,
     signed_side,
 )
-from app.reports import write_summary_csv
+from app.reports import available_result_stem, processed_video_filename, result_filenames, write_summary_csv
 from app.schemas import CountLine
 
 
@@ -34,7 +34,7 @@ def test_explicit_device_is_preserved():
 
 
 def test_line_coordinates_are_clamped_to_video_bounds():
-    line = CountLine(id="line", name="Límite", x1=-0.001, y1=0.2, x2=1.001, y2=0.8)
+    line = CountLine(id="line", name="Límite", road_name="Periférico", x1=-0.001, y1=0.2, x2=1.001, y2=0.8)
     assert line.x1 == 0
     assert line.x2 == 1
 
@@ -60,13 +60,29 @@ def test_video_quality_levels_reduce_bitrate_progressively():
 def test_summary_csv_matches_final_result(tmp_path):
     path = tmp_path / "resumen.csv"
     summary = [{
-        "numero": 1, "linea": "Avenida Norte", "total": 5,
+        "numero": 1, "nombre_carretera": "Periférico San Antonio Hool E",
+        "linea": "Carretera 1", "total": 5,
         "entrada": {"auto": 3, "bus": 0}, "salida": {"auto": 1, "bus": 1},
     }]
 
-    write_summary_csv(path, summary, ["auto", "bus"])
+    write_summary_csv(path, summary)
 
     assert path.read_text(encoding="utf-8-sig").splitlines() == [
-        "linea_numero,linea,total,entrada_auto,entrada_bus,salida_auto,salida_bus",
-        "1,Avenida Norte,5,3,0,1,1",
+        "linea_numero,Nombre carretera,linea,total,entrada_auto,entrada_truck,entrada_bus,entrada_bicicleta,entrada_persona,salida_auto,salida_truck,salida_bus,salida_bicicleta,salida_persona",
+        "1,Periférico San Antonio Hool E,Carretera 1,5,3,0,0,0,0,1,0,1,0,0",
     ]
+
+
+def test_processed_video_keeps_original_name():
+    assert processed_video_filename("Vuelo Mérida.mov") == "Vuelo Mérida_procesado.mp4"
+    assert processed_video_filename("../video raro.mp4") == "video raro_procesado.mp4"
+
+
+def test_result_files_are_readable_and_avoid_collisions(tmp_path):
+    assert result_filenames("Vuelo Mérida") == {
+        "video": "Vuelo Mérida_procesado.mp4",
+        "csv": "Vuelo Mérida_resumen.csv",
+        "json": "Vuelo Mérida_resultado.json",
+    }
+    (tmp_path / "Vuelo Mérida_procesado.mp4").touch()
+    assert available_result_stem(tmp_path, "Vuelo Mérida.mov") == "Vuelo Mérida_2"

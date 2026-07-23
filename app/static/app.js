@@ -1,4 +1,4 @@
-const state = { videoId: null, lines: [], drawing: null, pollTimer: null };
+const state = { videoId: null, videoFile: null, sourceFilename: null, lines: [], drawing: null, pollTimer: null };
 const $ = (selector) => document.querySelector(selector);
 const videoInput = $('#videoInput');
 const video = $('#video');
@@ -65,17 +65,21 @@ function resizeCanvas() {
 
 function renderLines() {
   $('#lineCount').textContent = state.lines.length;
-  $('#processButton').disabled = !state.videoId || state.lines.length === 0;
+  $('#processButton').disabled = !state.videoFile || state.lines.length === 0;
   const list = $('#lineList');
   if (!state.lines.length) { list.innerHTML = '<p class="empty-state">Aún no hay trazos.<br>Dibuja sobre el video.</p>'; redraw(); return; }
   list.innerHTML = state.lines.map((line, index) => `
     <div class="line-card" data-id="${line.id}">
-      <div class="line-card-top"><span class="line-number">${index + 1}</span><input class="line-name" value="${escapeHtml(line.name)}" aria-label="Nombre del trazo"><button class="icon-button delete-line" title="Eliminar">×</button></div>
+      <div class="line-card-top"><span class="line-number">${index + 1}</span><div class="line-fields">
+        <label><small>Línea</small><input class="line-name" value="${escapeAttribute(line.name)}" aria-label="Nombre de la línea"></label>
+        <label><small>Nombre carretera</small><input class="road-name" value="${escapeAttribute(line.road_name)}" placeholder="Ej. Calle 47B E" aria-label="Nombre de la carretera"></label>
+      </div><button class="icon-button delete-line" title="Eliminar">×</button></div>
       <div class="direction-row"><span class="direction-badges"><b>${line.positive_direction === 'entrada' ? '→ E' : '← E'}</b><b>${line.positive_direction === 'entrada' ? '← S' : '→ S'}</b></span><button type="button" class="swap-direction" title="Intercambiar entrada y salida">⇄ Invertir</button></div>
     </div>`).join('');
   list.querySelectorAll('.line-card').forEach(card => {
     const line = state.lines.find(item => item.id === card.dataset.id);
     card.querySelector('.line-name').addEventListener('input', e => { line.name = e.target.value; });
+    card.querySelector('.road-name').addEventListener('input', e => { line.road_name = e.target.value; });
     card.querySelector('.swap-direction').addEventListener('click', () => {
       line.positive_direction = line.positive_direction === 'entrada' ? 'salida' : 'entrada';
       renderLines();
@@ -86,6 +90,7 @@ function renderLines() {
 }
 
 function escapeHtml(value) { const div = document.createElement('div'); div.textContent = value; return div.innerHTML; }
+function escapeAttribute(value) { return escapeHtml(value).replaceAll('"', '&quot;'); }
 
 function apiError(data, fallback) {
   if (typeof data?.detail === 'string') return data.detail;
@@ -101,15 +106,25 @@ fetch('/api/system').then(response => response.json()).then(system => {
   if (system.recommended_device === 'mps') $('#device').value = 'auto';
 }).catch(() => { $('#systemStatus').textContent = 'Procesamiento local'; });
 
+async function uploadTemporaryVideo(file, resetLines = false) {
+  const body = new FormData(); body.append('video', file);
+  const response = await fetch('/api/videos', { method: 'POST', body });
+  const data = await response.json();
+  if (!response.ok) throw new Error(apiError(data, 'No fue posible subir el video'));
+  state.videoId = data.video_id; state.sourceFilename = data.filename || file.name;
+  if (resetLines) state.lines = [];
+  video.src = data.url;
+  return data;
+}
+
 videoInput.addEventListener('change', async () => {
   const file = videoInput.files[0]; if (!file) return;
   $('#uploadTitle').textContent = 'Subiendo…'; $('#uploadHint').textContent = file.name;
-  const body = new FormData(); body.append('video', file);
   try {
-    const response = await fetch('/api/videos', { method: 'POST', body });
-    const data = await response.json(); if (!response.ok) throw new Error(apiError(data, 'No fue posible subir el video'));
-    state.videoId = data.video_id; state.lines = [];
-    video.src = data.url; $('#workspace').classList.remove('hidden');
+    if (state.videoId) fetch(`/api/videos/${state.videoId}`, {method:'DELETE'}).catch(() => {});
+    state.videoFile = file;
+    const data = await uploadTemporaryVideo(file, true);
+    $('#workspace').classList.remove('hidden');
     $('#uploadTitle').textContent = file.name;
     $('#uploadHint').textContent = `${data.width}×${data.height} · ${data.fps} FPS · ${data.duration ?? '?'} s`;
     $('#workspace').scrollIntoView({ behavior: 'smooth', block: 'start' }); renderLines();
@@ -128,7 +143,10 @@ canvas.addEventListener('pointermove', event => { if (!state.drawing) return; co
 canvas.addEventListener('pointerup', event => {
   if (!state.drawing) return; const p = stagePoint(event); state.drawing.x2=p.x; state.drawing.y2=p.y;
   if (Math.hypot(state.drawing.x2-state.drawing.x1, state.drawing.y2-state.drawing.y1) > .025) {
-    state.lines.push({ ...state.drawing, id: crypto.randomUUID(), name:`Carretera ${state.lines.length+1}`, positive_direction:'entrada' });
+    state.lines.push({
+      ...state.drawing, id:crypto.randomUUID(), name:`Carretera ${state.lines.length+1}`,
+      road_name:'', positive_direction:'entrada',
+    });
     $('#canvasHelp').classList.add('hidden');
   }
   state.drawing=null; renderLines();
@@ -152,27 +170,30 @@ $('#processButton').addEventListener('click', async () => {
   const classes = [...document.querySelectorAll('#classGrid input:checked')].map(input => input.value);
   if (!classes.length) return toast('Selecciona al menos una clase');
   if (state.lines.some(line => !line.name.trim())) return toast('Todos los trazos necesitan un nombre');
-  const payload = {
-    video_id:state.videoId,
-    lines:state.lines.map(line => ({
-      ...line,
-      x1:Math.min(1, Math.max(0, line.x1)), y1:Math.min(1, Math.max(0, line.y1)),
-      x2:Math.min(1, Math.max(0, line.x2)), y2:Math.min(1, Math.max(0, line.y2)),
-    })),
-    classes, model:$('#model').value,
-    device:$('#device').value, confidence:Number($('#confidence').value),
-    image_size:Number($('#imageSize').value), save_annotated_video:$('#saveVideo').checked,
-    video_quality:$('#videoQuality').value,
-  };
+  if (state.lines.some(line => !line.road_name.trim())) return toast('Escribe el nombre de carretera de cada línea');
   try {
-    processButton.disabled = true; processButton.innerHTML = 'Iniciando…';
+    processButton.disabled = true; videoInput.disabled = true; processButton.innerHTML = 'Iniciando…';
+    if (!state.videoId) await uploadTemporaryVideo(state.videoFile);
+    const payload = {
+      video_id:state.videoId, source_filename:state.sourceFilename,
+      lines:state.lines.map(line => ({
+        ...line,
+        x1:Math.min(1, Math.max(0, line.x1)), y1:Math.min(1, Math.max(0, line.y1)),
+        x2:Math.min(1, Math.max(0, line.x2)), y2:Math.min(1, Math.max(0, line.y2)),
+      })),
+      classes, model:$('#model').value,
+      device:$('#device').value, confidence:Number($('#confidence').value),
+      image_size:Number($('#imageSize').value), save_annotated_video:$('#saveVideo').checked,
+      video_quality:$('#videoQuality').value,
+    };
     const response = await fetch('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     const data = await response.json(); if (!response.ok) throw new Error(apiError(data, 'No fue posible iniciar'));
     processButton.innerHTML = 'Procesando…';
     $('#processing').classList.remove('hidden'); $('#results').classList.add('hidden');
     $('#processing').scrollIntoView({ behavior:'smooth' }); pollJob(data.job_id);
   } catch(error) {
-    toast(error.message); processButton.disabled = false; processButton.innerHTML = 'Iniciar conteo <span>→</span>';
+    toast(error.message); processButton.disabled = false; videoInput.disabled = false;
+    processButton.innerHTML = 'Iniciar conteo <span>→</span>';
   }
 });
 
@@ -187,22 +208,25 @@ async function pollJob(jobId) {
     const tracking = job.unique_tracks !== undefined ? ` · ${job.active_tracks || 0} activos / ${job.unique_tracks} IDs` : '';
     $('#eventCount').textContent = `${job.events_count || 0} cruces${tracking}${speed}`;
     if (job.status === 'completado') return renderResults(job);
-    if (job.status === 'error') throw new Error(job.message || 'Falló el procesamiento');
+    if (job.status === 'error') { state.videoId = null; throw new Error(job.message || 'Falló el procesamiento'); }
     state.pollTimer = window.setTimeout(() => pollJob(jobId), 1200);
   } catch(error) {
     toast(error.message); $('#processingMessage').textContent='El procesamiento se detuvo';
+    videoInput.disabled=false;
     $('#processButton').disabled=false; $('#processButton').innerHTML='Reintentar conteo <span>→</span>';
   }
 }
 
 function renderResults(job) {
+  state.videoId = null;
+  videoInput.disabled=false;
   $('#processButton').disabled=false; $('#processButton').innerHTML='Procesar nuevamente <span>→</span>';
   $('#downloadCsv').href=job.csv; $('#downloadJson').href=job.json;
   const videoDownload = $('#downloadVideo');
   if (job.output_video) { videoDownload.href=job.output_video; videoDownload.classList.remove('hidden'); }
   else { videoDownload.removeAttribute('href'); videoDownload.classList.add('hidden'); }
   $('#resultCards').innerHTML = job.summary.map((line, index) => `
-    <article class="result-card"><header><strong>Línea ${line.numero ?? index + 1} · ${escapeHtml(line.linea)}</strong><strong>${line.total} cruces</strong></header>
+    <article class="result-card"><header><strong>Línea ${line.numero ?? index + 1} · ${escapeHtml(line.nombre_carretera || line.linea)}</strong><strong>${line.total} cruces</strong></header>
       <div class="result-columns">${['entrada','salida'].map(direction => `<div class="result-column"><h4>${direction}</h4>${Object.entries(line[direction]).map(([name,value]) => `<div class="metric"><span>${escapeHtml(name)}</span><b>${value}</b></div>`).join('')}</div>`).join('')}</div>
     </article>`).join('');
   $('#results').classList.remove('hidden'); $('#results').scrollIntoView({behavior:'smooth'});

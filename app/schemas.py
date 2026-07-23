@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class CountLine(BaseModel):
     id: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=120)
+    road_name: str = Field(min_length=1, max_length=160)
     x1: float = Field(ge=0, le=1)
     y1: float = Field(ge=0, le=1)
     x2: float = Field(ge=0, le=1)
@@ -29,6 +30,7 @@ class CountLine(BaseModel):
 
 class JobRequest(BaseModel):
     video_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    source_filename: str = Field(default="video.mp4", min_length=1, max_length=255)
     lines: list[CountLine] = Field(min_length=1, max_length=30)
     classes: list[Literal["persona", "bicicleta", "auto", "bus", "truck"]] = Field(min_length=1)
     model: Literal["best.pt", "yolo26n.pt", "yolo26s.pt"] = "best.pt"

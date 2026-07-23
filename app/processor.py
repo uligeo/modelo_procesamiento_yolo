@@ -9,14 +9,14 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-import imageio_ffmpeg
 import numpy as np
 import torch
 from ultralytics import YOLO
 
-from .reports import write_summary_csv
+from .reports import result_filenames, write_summary_csv
 from .schemas import JobRequest
 from .store import jobs
+from .video_writer import H264VideoWriter, VIDEO_CRF
 
 
 TRACKER_CONFIG = Path(__file__).resolve().parent / "tracker_aerial.yaml"
@@ -28,36 +28,6 @@ CLASS_ALIASES = {
     "truck": {"truck"},
     "bus": {"bus"},
 }
-VIDEO_CRF = {"alta": 20, "equilibrada": 26, "liviana": 31}
-class H264VideoWriter:
-    def __init__(self, path: Path, fps: float, size: tuple[int, int], quality: str) -> None:
-        self._writer = imageio_ffmpeg.write_frames(
-            str(path), size,
-            fps=fps,
-            codec="libx264",
-            pix_fmt_in="bgr24",
-            pix_fmt_out="yuv420p",
-            quality=None,
-            macro_block_size=2,
-            output_params=[
-                "-crf", str(VIDEO_CRF[quality]),
-                "-preset", "veryfast",
-                "-movflags", "+faststart",
-            ],
-            ffmpeg_log_level="warning",
-        )
-        self._writer.send(None)
-        self._closed = False
-
-    def write(self, frame: Any) -> None:
-        self._writer.send(frame)
-
-    def release(self) -> None:
-        if not self._closed:
-            self._writer.close()
-            self._closed = True
-
-
 def resolve_class_mapping(
     model_names: dict[int, str] | list[str], requested_classes: list[str]
 ) -> tuple[list[int], dict[int, str]]:
@@ -146,7 +116,9 @@ def draw_track_trails(
         cv2.circle(frame, points[-1], 5, (80, 220, 160), -1, cv2.LINE_AA)
 
 
-def process_video(job_id: str, request: JobRequest, video_path: Path, results_dir: Path) -> None:
+def process_video(
+    job_id: str, request: JobRequest, video_path: Path, results_dir: Path, result_stem: str,
+) -> None:
     cap = None
     writer = None
     try:
@@ -177,8 +149,9 @@ def process_video(job_id: str, request: JobRequest, video_path: Path, results_di
             })
             pixel_lines.append(values)
 
+        filenames = result_filenames(result_stem)
         if request.save_annotated_video:
-            output_path = results_dir / f"{job_id}.mp4"
+            output_path = results_dir / filenames["video"]
             writer = H264VideoWriter(output_path, fps, (width, height), request.video_quality)
 
         counts: dict[str, dict[str, dict[str, int]]] = {
@@ -236,7 +209,8 @@ def process_video(job_id: str, request: JobRequest, video_path: Path, results_di
                                 counts[line["id"]][direction][class_name] += 1
                                 last_crossing[key] = frame_number
                                 events.append({
-                                    "line_id": line["id"], "numero": line["numero"], "linea": line["name"],
+                                    "line_id": line["id"], "numero": line["numero"],
+                                    "nombre_carretera": line["road_name"], "linea": line["name"],
                                     "direccion": direction, "clase": class_name,
                                     "track_id": track_id, "frame": frame_number,
                                     "segundo": round(frame_number / fps, 2),
@@ -258,21 +232,33 @@ def process_video(job_id: str, request: JobRequest, video_path: Path, results_di
                     active_tracks=len(active_track_ids), unique_tracks=len(observed_track_ids),
                 )
 
+        cap.release()
+        cap = None
+        if writer is not None:
+            writer.release()
+            writer = None
+        video_path.unlink(missing_ok=True)
+
         summary = []
         for line in pixel_lines:
             line_counts = counts[line["id"]]
             summary.append({
-                "line_id": line["id"], "numero": line["numero"], "linea": line["name"],
+                "line_id": line["id"], "numero": line["numero"],
+                "nombre_carretera": line["road_name"], "linea": line["name"],
                 "entrada": line_counts["entrada"], "salida": line_counts["salida"],
                 "total": sum(sum(values.values()) for values in line_counts.values()),
             })
 
-        csv_path = results_dir / f"{job_id}.csv"
-        write_summary_csv(csv_path, summary, request.classes)
+        csv_path = results_dir / filenames["csv"]
+        write_summary_csv(csv_path, summary)
 
-        json_path = results_dir / f"{job_id}.json"
+        json_path = results_dir / filenames["json"]
         json_path.write_text(
-            json.dumps({"job_id": job_id, "summary": summary, "events": events}, ensure_ascii=False, indent=2),
+            json.dumps({
+                "job_id": job_id, "source_filename": request.source_filename,
+                "result_stem": result_stem, "filenames": filenames,
+                "summary": summary, "events": events,
+            }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
@@ -290,3 +276,4 @@ def process_video(job_id: str, request: JobRequest, video_path: Path, results_di
             cap.release()
         if writer is not None:
             writer.release()
+        video_path.unlink(missing_ok=True)
