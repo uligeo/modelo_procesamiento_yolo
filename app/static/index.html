@@ -49,6 +49,15 @@
           </div>
         </div>
         <p class="direction-help"><span class="entry-key">→ E</span> Entrada <span class="exit-key">← S</span> Salida. Cada línea contabiliza siempre los dos sentidos.</p>
+
+        <section class="processing hidden" id="processing">
+          <div class="processing-header">
+            <div><p class="step-label">04 · PROCESAMIENTO</p><h2 id="processingMessage">Preparando análisis…</h2></div>
+            <strong id="progressText">0%</strong>
+          </div>
+          <div class="progress-track"><div id="progressBar"></div></div>
+          <p id="eventCount">Preparando métricas del conteo…</p>
+        </section>
       </div>
 
       <aside class="control-panel">
@@ -98,15 +107,6 @@
         </details>
         <button class="primary" id="processButton" disabled>Iniciar conteo <span>→</span></button>
       </aside>
-    </section>
-
-    <section class="processing hidden" id="processing">
-      <div class="processing-header">
-        <div><p class="step-label">04 · PROCESAMIENTO</p><h2 id="processingMessage">Preparando análisis…</h2></div>
-        <strong id="progressText">0%</strong>
-      </div>
-      <div class="progress-track"><div id="progressBar"></div></div>
-      <p id="eventCount">0 cruces detectados</p>
     </section>
 
     <section class="results hidden" id="results">

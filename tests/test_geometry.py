@@ -84,5 +84,5 @@ def test_result_files_are_readable_and_avoid_collisions(tmp_path):
         "csv": "Vuelo Mérida_resumen.csv",
         "json": "Vuelo Mérida_resultado.json",
     }
-    (tmp_path / "Vuelo Mérida_procesado.mp4").touch()
+    (tmp_path / "Vuelo Mérida").mkdir()
     assert available_result_stem(tmp_path, "Vuelo Mérida.mov") == "Vuelo Mérida_2"

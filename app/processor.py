@@ -139,6 +139,10 @@ def process_video(
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        jobs.update(
+            job_id, message=f"Analizando video en {device.upper()}",
+            total_frames=total_frames,
+        )
         pixel_lines = []
         for line_number, line in enumerate(request.lines, start=1):
             values = line.model_dump()
@@ -150,8 +154,10 @@ def process_video(
             pixel_lines.append(values)
 
         filenames = result_filenames(result_stem)
+        output_dir = results_dir / result_stem
+        output_dir.mkdir(exist_ok=True)
         if request.save_annotated_video:
-            output_path = results_dir / filenames["video"]
+            output_path = output_dir / filenames["video"]
             writer = H264VideoWriter(output_path, fps, (width, height), request.video_quality)
 
         counts: dict[str, dict[str, dict[str, int]]] = {
@@ -226,9 +232,13 @@ def process_video(
             if frame_number % 10 == 0:
                 progress = round((frame_number / total_frames) * 100, 1) if total_frames else 0
                 elapsed = max(time.perf_counter() - processing_started, .001)
+                processing_fps = frame_number / elapsed
+                remaining_frames = max(total_frames - frame_number, 0)
+                eta_seconds = remaining_frames / processing_fps if processing_fps else None
                 jobs.update(
                     job_id, progress=min(progress, 99.9), frame=frame_number,
-                    events_count=len(events), processing_fps=round(frame_number / elapsed, 1),
+                    events_count=len(events), processing_fps=round(processing_fps, 1),
+                    elapsed_seconds=round(elapsed), eta_seconds=round(eta_seconds) if eta_seconds is not None else None,
                     active_tracks=len(active_track_ids), unique_tracks=len(observed_track_ids),
                 )
 
@@ -249,14 +259,15 @@ def process_video(
                 "total": sum(sum(values.values()) for values in line_counts.values()),
             })
 
-        csv_path = results_dir / filenames["csv"]
+        csv_path = output_dir / filenames["csv"]
         write_summary_csv(csv_path, summary)
 
-        json_path = results_dir / filenames["json"]
+        json_path = output_dir / filenames["json"]
         json_path.write_text(
             json.dumps({
                 "job_id": job_id, "source_filename": request.source_filename,
-                "result_stem": result_stem, "filenames": filenames,
+                "result_stem": result_stem, "result_folder": result_stem,
+                "filenames": filenames,
                 "summary": summary, "events": events,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",

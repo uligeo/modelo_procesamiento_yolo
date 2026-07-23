@@ -30,7 +30,10 @@ def available_result_stem(results_dir: Path, source_filename: str) -> str:
     base = safe_result_stem(source_filename)
     candidate = base
     suffix = 2
-    while any((results_dir / name).exists() for name in result_filenames(candidate).values()):
+    while (
+        (results_dir / candidate).exists()
+        or any((results_dir / name).exists() for name in result_filenames(candidate).values())
+    ):
         candidate = f"{base}_{suffix}"
         suffix += 1
     return candidate

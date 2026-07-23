@@ -34,9 +34,24 @@ def clear_orphan_uploads(directory: Path = UPLOADS) -> None:
             path.unlink(missing_ok=True)
 
 
+def organize_legacy_results(directory: Path = RESULTS) -> None:
+    for report_path in directory.glob("*_resultado.json"):
+        result_stem = report_path.name.removesuffix("_resultado.json")
+        lock_path = directory / f".~lock.{result_stem}_resumen.csv#"
+        if lock_path.exists():
+            continue
+        result_folder = directory / result_stem
+        result_folder.mkdir(exist_ok=True)
+        for filename in result_filenames(result_stem).values():
+            source = directory / filename
+            if source.exists():
+                source.replace(result_folder / filename)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     clear_orphan_uploads()
+    organize_legacy_results()
     yield
 
 
@@ -119,10 +134,11 @@ def create_job(request: JobRequest, background_tasks: BackgroundTasks) -> dict[s
     job_id = uuid.uuid4().hex
     result_stem = available_result_stem(RESULTS, request.source_filename)
     filenames = result_filenames(result_stem)
+    (RESULTS / result_stem).mkdir()
     jobs.create(job_id, {
         "job_id": job_id, "status": "en_cola", "progress": 0,
         "message": "Esperando procesamiento", "events_count": 0,
-        "result_stem": result_stem, "filenames": filenames,
+        "result_stem": result_stem, "result_folder": result_stem, "filenames": filenames,
     })
     background_tasks.add_task(process_video, job_id, request, matches[0], RESULTS, result_stem)
     return {"job_id": job_id}
@@ -137,7 +153,7 @@ def require_job(job_id: str) -> dict[str, object]:
     if not job and saved_result.exists():
         report = json.loads(saved_result.read_text(encoding="utf-8"))
     elif not job:
-        for candidate in RESULTS.glob("*_resultado.json"):
+        for candidate in RESULTS.rglob("*_resultado.json"):
             candidate_report = json.loads(candidate.read_text(encoding="utf-8"))
             if candidate_report.get("job_id") == job_id:
                 report = candidate_report
@@ -146,17 +162,31 @@ def require_job(job_id: str) -> dict[str, object]:
     if not job and report:
         result_stem = report.get("result_stem") or safe_result_stem(report.get("source_filename", "video.mp4"))
         filenames = report.get("filenames") or result_filenames(result_stem)
+        result_folder = report.get("result_folder")
+        if result_folder is None and saved_result.parent != RESULTS:
+            result_folder = saved_result.parent.name
         job = {
             "job_id": job_id, "status": "completado", "progress": 100,
             "message": "Conteo terminado", "summary": report["summary"],
             "events_count": len(report["events"]),
-            "result_stem": result_stem, "filenames": filenames,
-            "output_video": f"/api/jobs/{job_id}/video" if (RESULTS / filenames["video"]).exists() else None,
+            "result_stem": result_stem, "result_folder": result_folder or "",
+            "filenames": filenames,
+            "output_video": (
+                f"/api/jobs/{job_id}/video"
+                if job_result_path(result_folder or "", filenames["video"]).exists()
+                else None
+            ),
             "csv": f"/api/jobs/{job_id}/csv", "json": f"/api/jobs/{job_id}/json",
         }
     if not job:
         raise HTTPException(404, "Trabajo no encontrado")
     return job
+
+
+def job_result_path(result_folder: object, filename: object) -> Path:
+    safe_folder = Path(str(result_folder)).name if result_folder else ""
+    safe_filename = Path(str(filename)).name
+    return RESULTS / safe_folder / safe_filename
 
 
 @app.get("/api/jobs/{job_id}")
@@ -168,7 +198,7 @@ def get_job(job_id: str) -> dict[str, object]:
 def get_csv(job_id: str) -> FileResponse:
     job = require_job(job_id)
     filename = str(job.get("filenames", {}).get("csv", f"{job_id}.csv"))
-    path = RESULTS / filename
+    path = job_result_path(job.get("result_folder"), filename)
     if not path.exists():
         raise HTTPException(409, "El resultado todavía no está disponible")
     return FileResponse(path, media_type="text/csv", filename=filename)
@@ -178,7 +208,7 @@ def get_csv(job_id: str) -> FileResponse:
 def get_result_video(job_id: str) -> FileResponse:
     job = require_job(job_id)
     filename = str(job.get("filenames", {}).get("video", f"{job_id}.mp4"))
-    path = RESULTS / filename
+    path = job_result_path(job.get("result_folder"), filename)
     if not path.exists():
         raise HTTPException(409, "El video todavía no está disponible")
     return FileResponse(
@@ -191,7 +221,7 @@ def get_result_video(job_id: str) -> FileResponse:
 def get_json(job_id: str) -> FileResponse:
     job = require_job(job_id)
     filename = str(job.get("filenames", {}).get("json", f"{job_id}.json"))
-    path = RESULTS / filename
+    path = job_result_path(job.get("result_folder"), filename)
     if not path.exists():
         raise HTTPException(409, "El resultado todavía no está disponible")
     return FileResponse(path, media_type="application/json", filename=filename)

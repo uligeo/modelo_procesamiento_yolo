@@ -62,3 +62,25 @@ def test_startup_cleanup_preserves_placeholder(tmp_path):
 
     assert placeholder.exists()
     assert not orphan.exists()
+
+
+def test_legacy_results_are_grouped_unless_csv_is_open(tmp_path):
+    from app.main import organize_legacy_results
+
+    stem = "vuelo-centro"
+    filenames = [
+        f"{stem}_procesado.mp4",
+        f"{stem}_resumen.csv",
+        f"{stem}_resultado.json",
+    ]
+    for filename in filenames:
+        (tmp_path / filename).touch()
+    lock_path = tmp_path / f".~lock.{stem}_resumen.csv#"
+    lock_path.touch()
+
+    organize_legacy_results(tmp_path)
+    assert all((tmp_path / filename).exists() for filename in filenames)
+
+    lock_path.unlink()
+    organize_legacy_results(tmp_path)
+    assert all((tmp_path / stem / filename).exists() for filename in filenames)

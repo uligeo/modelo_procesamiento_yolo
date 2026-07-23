@@ -10,6 +10,16 @@ function toast(message) {
   window.setTimeout(() => element.classList.add('hidden'), 4500);
 }
 
+function setConfigurationLocked(locked) {
+  document.querySelectorAll('.control-panel input, .control-panel select, .control-panel button')
+    .forEach(control => { control.disabled = locked; });
+  $('#clearLines').disabled = locked;
+  videoInput.disabled = locked;
+  canvas.style.pointerEvents = locked ? 'none' : '';
+  $('.control-panel').classList.toggle('is-locked', locked);
+  $('#uploadCard').classList.toggle('is-locked', locked);
+}
+
 function stagePoint(event) {
   const rect = canvas.getBoundingClientRect();
   const clamp = value => Math.min(1, Math.max(0, value));
@@ -133,6 +143,15 @@ videoInput.addEventListener('change', async () => {
 
 video.addEventListener('loadedmetadata', resizeCanvas); window.addEventListener('resize', resizeCanvas);
 function formatTime(seconds) { const safe = Number.isFinite(seconds) ? seconds : 0; return `${String(Math.floor(safe/60)).padStart(2,'0')}:${String(Math.floor(safe%60)).padStart(2,'0')}`; }
+function formatDuration(seconds) {
+  const safe = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const remainder = safe % 60;
+  return hours
+    ? `${hours}:${String(minutes).padStart(2,'0')}:${String(remainder).padStart(2,'0')}`
+    : `${String(minutes).padStart(2,'0')}:${String(remainder).padStart(2,'0')}`;
+}
 video.addEventListener('loadedmetadata', () => { $('#videoTime').textContent = `00:00 / ${formatTime(video.duration)}`; });
 video.addEventListener('timeupdate', () => { $('#timeline').value = video.duration ? Math.round(video.currentTime/video.duration*1000) : 0; $('#videoTime').textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`; });
 video.addEventListener('play', () => $('#playPause').textContent='❚❚'); video.addEventListener('pause', () => $('#playPause').textContent='▶');
@@ -172,7 +191,7 @@ $('#processButton').addEventListener('click', async () => {
   if (state.lines.some(line => !line.name.trim())) return toast('Todos los trazos necesitan un nombre');
   if (state.lines.some(line => !line.road_name.trim())) return toast('Escribe el nombre de carretera de cada línea');
   try {
-    processButton.disabled = true; videoInput.disabled = true; processButton.innerHTML = 'Iniciando…';
+    setConfigurationLocked(true); processButton.innerHTML = 'Iniciando…';
     if (!state.videoId) await uploadTemporaryVideo(state.videoFile);
     const payload = {
       video_id:state.videoId, source_filename:state.sourceFilename,
@@ -192,7 +211,7 @@ $('#processButton').addEventListener('click', async () => {
     $('#processing').classList.remove('hidden'); $('#results').classList.add('hidden');
     $('#processing').scrollIntoView({ behavior:'smooth' }); pollJob(data.job_id);
   } catch(error) {
-    toast(error.message); processButton.disabled = false; videoInput.disabled = false;
+    toast(error.message); setConfigurationLocked(false); renderLines();
     processButton.innerHTML = 'Iniciar conteo <span>→</span>';
   }
 });
@@ -204,23 +223,35 @@ async function pollJob(jobId) {
     if (!response.ok) throw new Error(job.detail || 'No se encontró el proceso');
     $('#processingMessage').textContent = job.message; $('#progressText').textContent = `${job.progress || 0}%`;
     $('#progressBar').style.width = `${job.progress || 0}%`;
-    const speed = job.processing_fps ? ` · ${job.processing_fps} FPS en ${String(job.device).toUpperCase()}` : '';
-    const tracking = job.unique_tracks !== undefined ? ` · ${job.active_tracks || 0} activos / ${job.unique_tracks} IDs` : '';
-    $('#eventCount').textContent = `${job.events_count || 0} cruces${tracking}${speed}`;
+    const metrics = [`${job.events_count || 0} cruces`];
+    if (job.unique_tracks !== undefined) {
+      metrics.push(`${job.active_tracks || 0} objetos activos`, `${job.unique_tracks} rastreados`);
+    }
+    if (job.processing_fps) metrics.push(`${job.processing_fps} FPS en ${String(job.device).toUpperCase()}`);
+    if (job.elapsed_seconds !== undefined) metrics.push(`${formatDuration(job.elapsed_seconds)} transcurridos`);
+    if (job.eta_seconds !== undefined && job.eta_seconds !== null) {
+      metrics.push(`${formatDuration(job.eta_seconds)} restantes aprox.`);
+    }
+    $('#eventCount').textContent = metrics.join(' · ');
     if (job.status === 'completado') return renderResults(job);
-    if (job.status === 'error') { state.videoId = null; throw new Error(job.message || 'Falló el procesamiento'); }
+    if (job.status === 'error') {
+      state.videoId = null; setConfigurationLocked(false); renderLines();
+      toast(job.message || 'Falló el procesamiento');
+      $('#processingMessage').textContent='El procesamiento se detuvo';
+      $('#processButton').innerHTML='Reintentar conteo <span>→</span>';
+      return;
+    }
     state.pollTimer = window.setTimeout(() => pollJob(jobId), 1200);
   } catch(error) {
-    toast(error.message); $('#processingMessage').textContent='El procesamiento se detuvo';
-    videoInput.disabled=false;
-    $('#processButton').disabled=false; $('#processButton').innerHTML='Reintentar conteo <span>→</span>';
+    toast(error.message); $('#processingMessage').textContent='Reconectando con el procesamiento…';
+    state.pollTimer = window.setTimeout(() => pollJob(jobId), 3000);
   }
 }
 
 function renderResults(job) {
   state.videoId = null;
-  videoInput.disabled=false;
-  $('#processButton').disabled=false; $('#processButton').innerHTML='Procesar nuevamente <span>→</span>';
+  setConfigurationLocked(false); renderLines();
+  $('#processButton').innerHTML='Procesar nuevamente <span>→</span>';
   $('#downloadCsv').href=job.csv; $('#downloadJson').href=job.json;
   const videoDownload = $('#downloadVideo');
   if (job.output_video) { videoDownload.href=job.output_video; videoDownload.classList.remove('hidden'); }
@@ -229,5 +260,6 @@ function renderResults(job) {
     <article class="result-card"><header><strong>Línea ${line.numero ?? index + 1} · ${escapeHtml(line.nombre_carretera || line.linea)}</strong><strong>${line.total} cruces</strong></header>
       <div class="result-columns">${['entrada','salida'].map(direction => `<div class="result-column"><h4>${direction}</h4>${Object.entries(line[direction]).map(([name,value]) => `<div class="metric"><span>${escapeHtml(name)}</span><b>${value}</b></div>`).join('')}</div>`).join('')}</div>
     </article>`).join('');
+  $('#processing').classList.add('hidden');
   $('#results').classList.remove('hidden'); $('#results').scrollIntoView({behavior:'smooth'});
 }
